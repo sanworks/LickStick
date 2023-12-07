@@ -34,11 +34,11 @@ classdef LickSense < handle
     properties
         Port                   % USB Serial port (Wrapped with ArCOM class)
         activeChannel          % The active channel index (0 or 1)
-        rCount                 % Number of crystal clock pulses used to measure capacitance.
+        rCount                 % Number of crystal clock counts comprising duration to measure capacitance.
                                % Higher rCount = better detection, but adds latency
-        settleCount            % Number of clock pulses to pause before measuring
-        refDivider             % Factor to divide the crystal clock base frequency
-        driveCurrent           % Electric current drives the sensor. Units = steps. Range = [0, 31]
+        settleCount            % Number of clock counts to pause before measuring
+        refDivider             % Factor to divide the crystal clock base frequency (40MHz) used for counts
+        driveCurrent           % Current driving the sensor. Units = steps. Range = [0, 31] for [16µA, 1571µA]
                                % More current = better detection, higher odds of interference to other systems
         threshold              % Lick detection threshold. Units = bits. Range = [0, 4294967295]
         ledEnabled             % If enabled, board LED remains on during detected licks
@@ -108,7 +108,6 @@ classdef LickSense < handle
         function set.activeChannel(obj, newChannel)
             % Callback function triggered when activeChannel is set.
             % Args: newChannel, the new active channel index (0 or 1)
-
             if ~(newChannel == 0 || newChannel == 1)
                 error ('Error: Active channel must be either 0 or 1')
             end
