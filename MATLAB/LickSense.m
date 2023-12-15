@@ -181,14 +181,15 @@ classdef LickSense < handle
 
         function autoSetThreshold(obj)
             % Automatically sets the threshold.
-            % IMPORTANT: Run when the subject is NOT licking.
-            % The range of the signal is measured in bits, and the threshold
-            % is set equal to 10 range-widths below the measured range.
+            % IMPORTANT: Run when the subject is NOT licking. For human
+            % testing, run while finger is 3mm from drink tube end.
+            % The range of the signal is measured in bits, and the threshold is
+            % set equal to 3 range-widths below the measured range.
             nSamplesToMeasure = 1000;
             obj.Port.write('R', 'uint8', nSamplesToMeasure, 'uint32'); % Request 10k samples
             Values = obj.Port.read(nSamplesToMeasure, 'uint32');
             vMax = max(Values); vMin = min(Values); vRange = vMax-vMin;
-            newThreshold = vMin-(10*vRange);
+            newThreshold = vMin-(3*vRange);
             obj.threshold = newThreshold;
         end
 
