@@ -67,7 +67,7 @@ classdef LickSense < handle
             % Args: portName (the USB serial port name, e.g. 'COM3')
 
             % Clear orphaned timers from previous instances
-            obj.clearTimers;
+            obj.clearTimers(portName);
 
             % Setup USB serial port
             obj.Port = ArCOM_LickSense(portName, 480000000);
@@ -351,7 +351,7 @@ classdef LickSense < handle
             obj.Port.flush;
         end
 
-        function clearTimers(obj)
+        function clearTimers(obj, portString)
             % Destroy any orphaned timers from previous instances
             T = timerfindall;
             for i = 1:length(T)
