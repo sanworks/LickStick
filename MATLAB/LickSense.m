@@ -186,10 +186,11 @@ classdef LickSense < handle
             % The range of the signal is measured in bits, and the threshold is
             % set equal to 3 range-widths below the measured range.
             nSamplesToMeasure = 1000;
+            rangeMultiple = 5;
             obj.Port.write('R', 'uint8', nSamplesToMeasure, 'uint32'); % Request 10k samples
             Values = obj.Port.read(nSamplesToMeasure, 'uint32');
             vMax = max(Values); vMin = min(Values); vRange = vMax-vMin;
-            newThreshold = vMin-(3*vRange);
+            newThreshold = vMin-(rangeMultiple*vRange);
             obj.threshold = newThreshold;
         end
 
@@ -224,6 +225,10 @@ classdef LickSense < handle
                 'String',num2str(obj.threshold));
             obj.gui.autoThreshButton = uicontrol('Style', 'pushbutton', 'Position', [160 10 80 20], 'FontSize', 12, 'String', 'AutoSet', 'Callback',@(h,e)obj.uiAutoSetThreshold);
             set(gca, 'xlim', [0 obj.maxDisplayTime]);
+            obj.gui.tMaxLabel = uicontrol('Style', 'text', 'Position', [1090 10 100 20], 'FontSize', 12, 'String', 'tMax (s):');
+            obj.gui.tMaxSet = uicontrol('Style', 'edit', 'Position', [1200 10 70 20], 'FontSize', 10,...
+                'BackgroundColor', [1 1 1], 'FontWeight', 'bold', 'Callback',@(h,e)obj.uiSetTmax,...
+                'String',num2str(obj.maxDisplayTime));
             obj.gui.resetRangeButton = uicontrol('Style', 'pushbutton', 'Position', [1290 10 100 20], 'FontSize', 12, 'String', 'RngReset', 'Callback',@(h,e)obj.UIresetRange);
             %set(gca, 'ylim', [15500000 16000000]);
             obj.gui.startStopButton = uicontrol('Style', 'pushbutton', 'Position', [1290 440 100 30], 'FontSize', 12, 'String', 'Stop', 'Callback',@(h,e)obj.uiStartStop);
@@ -266,7 +271,7 @@ classdef LickSense < handle
                 obj.acquiredData.Sensor(obj.gui.acquiredDataPos:obj.gui.acquiredDataPos+nIntensities-1) = NewIntensities;
                 obj.acquiredData.TTL(obj.gui.acquiredDataPos:obj.gui.acquiredDataPos+nIntensities-1) = double(LickDetected);
                 obj.gui.acquiredDataPos = obj.gui.acquiredDataPos + nIntensities;
-                Div = 500;
+                Div = 2000; % Polling frequency (Hz), determined by READ_INTERVAL (us) in firmware. 
                 Times = (obj.gui.DisplayPos:obj.gui.DisplayPos+nIntensities-1)/Div;
                 DisplayTime = (Times(end)-obj.gui.SweepStartTime);
                 obj.gui.DisplayPos = obj.gui.DisplayPos + nIntensities;
@@ -285,11 +290,7 @@ classdef LickSense < handle
                         obj.gui.Ymin = min(obj.gui.DisplayIntensities);
                         set(obj.gui.Plot, 'ylim', [obj.gui.Ymin-(obj.gui.Ymin*0.0005) obj.gui.Ymax+(obj.gui.Ymax*0.0005)]);
                     end
-                    obj.gui.DisplayIntensities(1:obj.gui.DisplayPos) = NaN;
-                    obj.gui.DisplayTTL(1:obj.gui.DisplayPos) = NaN;
-                    obj.gui.DisplayTimes(1:obj.gui.DisplayPos) = NaN;
-                    obj.gui.DisplayPos = 1;
-                    obj.gui.SweepStartTime = 0;
+                    obj.resetSweep;
                 else
                     SweepTimes = Times-obj.gui.SweepStartTime;
                     obj.gui.DisplayIntensities(obj.gui.DisplayPos-nIntensities:obj.gui.DisplayPos-1) = NewIntensities;
@@ -302,10 +303,25 @@ classdef LickSense < handle
             
         end
 
+        function resetSweep(obj)
+            obj.gui.DisplayIntensities(1:obj.gui.DisplayPos) = NaN;
+            obj.gui.DisplayTTL(1:obj.gui.DisplayPos) = NaN;
+            obj.gui.DisplayTimes(1:obj.gui.DisplayPos) = NaN;
+            obj.gui.DisplayPos = 1;
+            obj.gui.SweepStartTime = 0;
+        end
+
         function uiSetThreshold(obj)
             newThreshold = str2double(get(obj.gui.thresholdSet, 'String'));
             obj.threshold = newThreshold;
             set(obj.gui.OscopeThreshLine, 'ydata', [newThreshold,newThreshold]);
+        end
+
+        function uiSetTmax(obj)
+            newTmax = str2double(get(obj.gui.tMaxSet, 'String'));
+            obj.maxDisplayTime = newTmax;
+            set(obj.gui.Plot, 'xlim', [0 obj.maxDisplayTime]);
+            obj.resetSweep;
         end
 
         function UIresetRange(obj)
