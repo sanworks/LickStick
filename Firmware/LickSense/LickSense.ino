@@ -24,7 +24,7 @@
 #include "FDC2214.h" // A class to interface with the Texas Instruments FDC2214 capacitive sensor IC
 
 // Firmware version
-#define FIRMWARE_VERSION 1
+#define FIRMWARE_VERSION 2
 
 // Pin definitions
 #define CLK_EN 10  // Clock enable
@@ -35,7 +35,6 @@
 #define LED_PIN 13 // LED
 
 // Parameters
-#define READ_INTERVAL 500 // Sensor read interval, units = µs
 #define THRESH_DEFAULT 1900000 // Default touch detection threshold. Used from power-on until the PC connects.
 
 // Setup interfaces
@@ -53,7 +52,7 @@ byte lickDetected = 0;
 byte ledEnabled = 0;
 uint16_t regValue = 0;
 uint32_t thresholdValue = 0;
-uint32_t nDebounceCycles = 20; // 1ms cycles = 50Hz max licking
+uint32_t nDebounceCycles = 20; // 20 cycles @ 2kHz sampling = 100Hz max licking
 uint32_t debounceCounter = 0;
 uint32_t nSamplesToReturn = 0;
 union {
@@ -61,6 +60,10 @@ union {
     uint16_t uint16[2];
     uint32_t uint32[1];
 } sensorValue;
+union {
+    byte byteArray[4];
+    float floatVal;
+} samplingInterval; // Hardware timer period in microseconds (500 = 2kHz). Set as a Union so it can be read as bytes.
 
 void setup() {
   Wire.begin();
@@ -72,7 +75,8 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
   thresholdValue = THRESH_DEFAULT;
-  readTimer.begin(readCycle, READ_INTERVAL);
+  samplingInterval.floatVal = 500;
+  readTimer.begin(readCycle, samplingInterval.floatVal);
 }
 
 void loop() {
@@ -112,6 +116,11 @@ void loop() {
       case '!': // Set active channel
         inByte = USBCOM.readByte();
         SensorIC.set_ACTIVE_CHANNEL(inByte);
+      break;
+      case 'I': // Set sampling interval
+        USBCOM.readByteArray(samplingInterval.byteArray, 4);
+        readTimer.end();
+        readTimer.begin(readCycle, samplingInterval.floatVal);
       break;
       case 'L': // set LED enable/disable
         ledEnabled = USBCOM.readByte();

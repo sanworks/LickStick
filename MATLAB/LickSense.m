@@ -41,9 +41,14 @@ classdef LickSense < handle
         driveCurrent           % Current driving the sensor. Units = steps. Range = [0, 31] for [16µA, 1571µA]
                                % More current = better detection, higher odds of interference to other systems
         threshold              % Lick detection threshold. Units = bits. Range = [0, 4294967295]
+        samplingRate           % Rate at which the FDC2214-Q1 is polled for new measurements
         ledEnabled             % If enabled, board LED remains on during detected licks
-        SamplingPeriod_us = 0; % In µs, computed from rCount, settleCount, refDivider and extClkFreq
+        
         acquiredData           % Data acquired while running the streaming GUI
+    end
+
+    properties (SetAccess = protected)
+        info                   % Struct with information about the system
     end
 
     properties (SetAccess = immutable)
@@ -51,14 +56,15 @@ classdef LickSense < handle
     end
 
     properties (Access = private)
-        currentFirmwareVersion % Current firmware version expected from device
-        streamTimer            % MATLAB timer (to poll serial buffer during USB streaming)
-        initialized = false;   % True after the constructor finishes executing
-        streaming = false;     % Flag to indicate when streaming data via USB
-        gui = struct;          % Struct of handles for GUI elements
-        nDisplaySamples = 200; % #samples to show when streaming to live plot
-        maxDisplayTime = 2;    % When streaming to plot, show up to last 2 seconds
-        extClkFreq = 40000000; % Fixed frequency of crystal clock on the device 
+        currentFirmwareVersion  % Current firmware version expected from device
+        streamTimer             % MATLAB timer (to poll serial buffer during USB streaming)
+        initialized = false;    % True after the constructor finishes executing
+        streaming = false;      % Flag to indicate when streaming data via USB
+        gui = struct;           % Struct of handles for GUI elements
+        nDisplaySamples = 4000; % #samples to show when streaming to live plot
+        maxDisplayTime = 2;     % When streaming to plot, show up to last 2 seconds
+        extClkFreq = 40000000;  % Fixed frequency of crystal clock on the device (Hz) 
+        sampleDataTemplate;     % Template for preallocated sample data
     end
 
     methods
@@ -92,15 +98,41 @@ classdef LickSense < handle
             obj.threshold = 18200000;
             obj.activeChannel = 0;
             obj.ledEnabled = false;
+            obj.samplingRate = 2000; % Frequency at which FDC2214-Q1 is polled for new measurements (Hz)
+
+            % Populate system info  
+            obj.info.measurementTime_us = 0; % Actual measurement time in µs, computed from rCount, settleCount, 
+                                             % refDivider and extClkFreq. 
+
+            % Preallocate
+            obj.sampleDataTemplate = uint32(zeros(1,36000000)); % Preallocate 5 hours of samples
 
             % Finish setup
             obj.initialized = true;
-            obj.computeSamplingPeriod;
+            obj.computeMeasurementTime;
+        end
+
+        function set.samplingRate(obj, newRate)
+            % Set sampling rate
+            % Args: newRate, the new sampling rate in Hz
+            obj.assertNotStreaming('samplingRate');
+            if obj.firmwareVersion > 1
+                if (newRate < 500) || (newRate > 2000)
+                    error('The sampling rate must be between 500Hz and 2000Hz');
+                end
+                obj.Port.write(['I' typecast(single((1/newRate)*1000000), 'uint8')]);
+            else
+                warning('LickSense warning: firmware v1 has a fixed sampling rate. Sampling rate not changed.')
+                newRate = 2000;
+            end
+            obj.samplingRate = newRate;
+            obj.nDisplaySamples = obj.samplingRate*obj.maxDisplayTime;
         end
 
         function set.ledEnabled(obj, newState)
             % Callback function triggered when ledEnabled is set.
             % Args: newState, the new state of LED enbale (false or true)
+            obj.assertNotStreaming('ledEnabled');
             obj.Port.write(['L' uint8(newState)], 'uint8');
             obj.ledEnabled = newState;
         end
@@ -108,6 +140,7 @@ classdef LickSense < handle
         function set.activeChannel(obj, newChannel)
             % Callback function triggered when activeChannel is set.
             % Args: newChannel, the new active channel index (0 or 1)
+            obj.assertNotStreaming('activeChannel');
             if ~(newChannel == 0 || newChannel == 1)
                 error ('Error: Active channel must be either 0 or 1')
             end
@@ -118,40 +151,44 @@ classdef LickSense < handle
         function set.rCount(obj, newCount)
             % Callback function triggered when rCount is set.
             % Args: newCount, the new value of rCount (units = clock pulses)
+            obj.assertNotStreaming('rCount');
             if newCount < 256 || newCount > 65535
                 error ('Error: rCount must be in range [256 65535]')
             end
             obj.Port.write('W', 'uint8', newCount, 'uint16');
             obj.rCount = newCount;
-            obj.computeSamplingPeriod;
+            obj.computeMeasurementTime;
         end
 
         function set.settleCount(obj, newCount)
             % Callback function triggered when settleCount is set.
             % Args: newCount, the new value of settleCount (units = clock pulses)
+            obj.assertNotStreaming('settleCount');
             if newCount < 2 || newCount > 65535
                 error ('Error: settleCount must be in range [2 65535]')
             end
             obj.Port.write('N', 'uint8', newCount, 'uint16');
             obj.settleCount = newCount;
-            obj.computeSamplingPeriod;
+            obj.computeMeasurementTime;
         end
 
         function set.refDivider(obj, newDivider)
             % Callback function triggered when refDivider is set.
             % Args: newDivider, the new value of refDivider (units = factor)
+            obj.assertNotStreaming('refDivider');
             if newDivider < 1 || newDivider > 255
                 error ('Error: refDivider must be in range [1 255]')
             end
             obj.Port.write(['D' newDivider], 'uint8');
             obj.refDivider = newDivider;
-            obj.computeSamplingPeriod;
+            obj.computeMeasurementTime;
         end
 
         function set.driveCurrent(obj, newCurrent)
             % Callback function triggered when driveCurrent is set.
             % Args: newCurrent, the new value of driveCurrent 
             %       units = increments, range = [0, 31]
+            obj.assertNotStreaming('driveCurrent');
             if newCurrent < 0 || newCurrent > 31
                 error ('Error: driveCurrent must be in range [0 31]')
             end
@@ -171,6 +208,7 @@ classdef LickSense < handle
             % Reads the current value of the sensor
             % Optional argument = nSamples (contiguous)
             % Returns: values, the sensor reading(s) in bits (uint32)
+            obj.assertNotStreaming('readSensor operation');
             nSamples = 1;
             if nargin > 1
                 nSamples = varargin{1};
@@ -185,6 +223,7 @@ classdef LickSense < handle
             % testing, run while finger is 3mm from drink tube end.
             % The range of the signal is measured in bits, and the threshold is
             % set equal to 3 range-widths below the measured range.
+            obj.assertNotStreaming('threshold');
             nSamplesToMeasure = 1000;
             rangeMultiple = 5;
             obj.Port.write('R', 'uint8', nSamplesToMeasure, 'uint32'); % Request 10k samples
@@ -194,21 +233,38 @@ classdef LickSense < handle
             obj.threshold = newThreshold;
         end
 
+        function clearAcquiredData(obj)
+            % Clears acquired data in obj.acquiredData. Intended to be used in protocol
+            % file just before main loop to exclude samples acquired during manual threshold setup
+            obj.acquiredData.Sensor = obj.sampleDataTemplate;
+            obj.acquiredData.TTL = uint8(obj.sampleDataTemplate);
+            obj.gui.acquiredDataPos = 1;
+        end
+
         function stream(obj)
             % Launch the live streaming GUI
 
             % Setup data structure
             obj.acquiredData = struct;
-            obj.acquiredData.Sensor = uint32(zeros(1,1000000));
-            obj.acquiredData.TTL = uint32(zeros(1,1000000));
+            obj.acquiredData.nSamples = 0;
+            obj.acquiredData.Sensor = obj.sampleDataTemplate;
+            obj.acquiredData.TTL = uint8(obj.sampleDataTemplate);
             obj.acquiredData.Params = struct; 
             obj.acquiredData.Params.threshold = obj.threshold;
+            obj.acquiredData.Params.samplingRate = obj.samplingRate;
             obj.acquiredData.Params.activeChannel = obj.activeChannel;
             obj.acquiredData.Params.rCount = obj.rCount;
             obj.acquiredData.Params.settleCount = obj.settleCount;
             obj.acquiredData.Params.refDivider = obj.refDivider;
             obj.acquiredData.Params.driveCurrent = obj.driveCurrent;
-            obj.acquiredData.Params.SamplingPeriod_us = obj.SamplingPeriod_us;
+            obj.acquiredData.Info = struct;
+            dateInfo = datestr(now, 30);
+            dateInfo(dateInfo == 'T') = '_';
+            obj.acquiredData.Info.dateTime = dateInfo;
+            obj.acquiredData.Info.measurementTime_us = obj.info.measurementTime_us;
+            obj.acquiredData.Info.pcArchitecture = computer('arch');
+            obj.acquiredData.Info.pcOS = system_dependent('getos');
+            obj.acquiredData.Info.matlabVersion = version('-release');
 
             % Setup GUI handle structure
             obj.gui = struct;
@@ -271,7 +327,7 @@ classdef LickSense < handle
                 obj.acquiredData.Sensor(obj.gui.acquiredDataPos:obj.gui.acquiredDataPos+nIntensities-1) = NewIntensities;
                 obj.acquiredData.TTL(obj.gui.acquiredDataPos:obj.gui.acquiredDataPos+nIntensities-1) = double(LickDetected);
                 obj.gui.acquiredDataPos = obj.gui.acquiredDataPos + nIntensities;
-                Div = 2000; % Polling frequency (Hz), determined by READ_INTERVAL (us) in firmware. 
+                Div = obj.samplingRate; % Polling frequency (Hz), determined by READ_INTERVAL (us) in firmware. 
                 Times = (obj.gui.DisplayPos:obj.gui.DisplayPos+nIntensities-1)/Div;
                 DisplayTime = (Times(end)-obj.gui.SweepStartTime);
                 obj.gui.DisplayPos = obj.gui.DisplayPos + nIntensities;
@@ -304,9 +360,9 @@ classdef LickSense < handle
         end
 
         function resetSweep(obj)
-            obj.gui.DisplayIntensities(1:obj.gui.DisplayPos) = NaN;
-            obj.gui.DisplayTTL(1:obj.gui.DisplayPos) = NaN;
-            obj.gui.DisplayTimes(1:obj.gui.DisplayPos) = NaN;
+            obj.gui.DisplayIntensities(1:obj.nDisplaySamples) = NaN;
+            obj.gui.DisplayTTL(1:obj.nDisplaySamples) = NaN;
+            obj.gui.DisplayTimes(1:obj.nDisplaySamples) = NaN;
             obj.gui.DisplayPos = 1;
             obj.gui.SweepStartTime = 0;
         end
@@ -314,12 +370,14 @@ classdef LickSense < handle
         function uiSetThreshold(obj)
             newThreshold = str2double(get(obj.gui.thresholdSet, 'String'));
             obj.threshold = newThreshold;
+            obj.acquiredData.Params.threshold = newThreshold;
             set(obj.gui.OscopeThreshLine, 'ydata', [newThreshold,newThreshold]);
         end
 
         function uiSetTmax(obj)
             newTmax = str2double(get(obj.gui.tMaxSet, 'String'));
             obj.maxDisplayTime = newTmax;
+            obj.nDisplaySamples = obj.samplingRate*obj.maxDisplayTime;
             set(obj.gui.Plot, 'xlim', [0 obj.maxDisplayTime]);
             obj.resetSweep;
         end
@@ -382,17 +440,26 @@ classdef LickSense < handle
             end
         end
 
-        function computeSamplingPeriod(obj)
+        function computeMeasurementTime(obj)
             if obj.initialized
                 SettleTime = (obj.settleCount*16)/(obj.extClkFreq/obj.refDivider);
-                ConversionTime = (obj.rCount*16)/(obj.extClkFreq/obj.refDivider);
-                obj.SamplingPeriod_us = (SettleTime + ConversionTime)*1000000;
+                ConversionTime = ((obj.rCount*16)+4)/(obj.extClkFreq/obj.refDivider);
+                obj.info.measurementTime_us = (SettleTime + ConversionTime)*1000000;
+            end
+        end
+
+        function assertNotStreaming(obj, paramName)
+            if obj.streaming
+                error(['Error: ' paramName ' cannot be set during USB data streaming. '...  
+                       'Close the streaming GUI first.'])
             end
         end
 
         function endAcq(obj)
             % End acquisition
+            if obj.streaming
             obj.stopAcq;
+            end
             delete(obj.streamTimer);
             obj.streamTimer = [];
 
@@ -400,8 +467,10 @@ classdef LickSense < handle
             delete(obj.gui.Fig);
 
             % Trim preallocated data vectors to actual length
-            obj.acquiredData.Sensor = obj.acquiredData.Sensor(1:obj.gui.acquiredDataPos);
-            obj.acquiredData.TTL = obj.acquiredData.TTL(1:obj.gui.acquiredDataPos);
+            nSamples = obj.gui.acquiredDataPos-1;
+            obj.acquiredData.Sensor = obj.acquiredData.Sensor(1:nSamples);
+            obj.acquiredData.TTL = obj.acquiredData.TTL(1:nSamples);
+            obj.acquiredData.nSamples = nSamples;
         end
     end
 end
