@@ -1,7 +1,7 @@
 %{
 ----------------------------------------------------------------------------
 
-This file is part of the Sanworks LickSense repository
+This file is part of the Sanworks LickStick repository
 Copyright (C) Sanworks LLC, Rochester, New York, USA
 
 ----------------------------------------------------------------------------
@@ -18,20 +18,20 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 %}
 
-function LoadLickSenseFirmware(port, varargin)
-% Firmware load tool for LickSense. This tool will load the latest stable
+function LoadLickStickFirmware(port, varargin)
+% Firmware load tool for LickStick. This tool will load the latest stable
 % firmware binary to the device.
 %
 % Args:
 % port: The USB serial port of the device
 % version (optional): The version number to load in range 1, 4294967295
 %
-% Usage: LoadLickSenseFirmware('COM3'); % Load the latest firmware to device on port COM3
-%        LoadLickSenseFirmware('COM4', 2); % Load firmware version 2 to device on COM4
+% Usage: LoadLickStickFirmware('COM3'); % Load the latest firmware to device on port COM3
+%        LoadLickStickFirmware('COM4', 2); % Load firmware version 2 to device on COM4
 
 % Verify supported platform
 if ~ismember(computer,{'PCWIN64', 'GLNXA64'})
-    error(['Error: The LickSense firmware updater is not yet available on %s.' char(10)...
+    error(['Error: The LickStick firmware updater is not yet available on %s.' char(10)...
         'Please load from source using the Arduino application.'])
 end
 
@@ -43,7 +43,7 @@ end
 
 % Location of firmware binaries
 FirmwarePath = fileparts(mfilename('fullpath'));
-thisFolder = fileparts(which('LoadLickSenseFirmware'));
+thisFolder = fileparts(which('LoadLickStickFirmware'));
 
 % Define path for tycmd executable
 switch computer
@@ -75,7 +75,7 @@ if nargin > 1
     end
 end
 
-FileName = ['LickSenseFirmware_v' num2str(targetVersion) '.hex'];
+FileName = ['LickStickFirmware_v' num2str(targetVersion) '.hex'];
 
 if ~ispc && ~ismac
     try % Try to give the uploader execute permissions

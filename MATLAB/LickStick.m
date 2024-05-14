@@ -1,7 +1,7 @@
 %{
 ----------------------------------------------------------------------------
 
-This file is part of the Sanworks LickSense repository
+This file is part of the Sanworks LickStick repository
 Copyright (C) Sanworks LLC, Rochester, New York, USA
 
 ----------------------------------------------------------------------------
@@ -18,11 +18,11 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 %}
 
-% LickSense class to interface with the LickSense device, a capacitive lick
-% detector built around the Texas Instruments FDC2214-Q1 sensor chip.
+% LickStick class to interface with the LickStick device, a capacitive lick
+% detector powered by the Texas Instruments FDC2214-Q1 sensor IC.
 %
 % Usage:
-% L = LickSense('COM3');       % Where COM3 is the device's USB serial port
+% L = LickStick('COM3');       % Where COM3 is the device's USB serial port
 % L.field = value;             % Update the device params by setting class fields
 % L.autoSetThreshold;          % Automatically set the lick detection threshold
 % values = L.readSensor;       % Read the current sensor value (units = bits)
@@ -30,7 +30,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 % data = L.acquiredData;       % Stored data from last streaming GUI session
 % clear L                      % Clear L when finished, releasing the serial port
 
-classdef LickSense < handle
+classdef LickStick < handle
     properties
         Port                   % USB Serial port (Wrapped with ArCOM class)
         activeChannel          % The active channel index (0 or 1)
@@ -68,22 +68,22 @@ classdef LickSense < handle
     end
 
     methods
-        function obj = LickSense(portName)
-            % Constructor function to set up an instance of LickSense
+        function obj = LickStick(portName)
+            % Constructor function to set up an instance of LickStick
             % Args: portName (the USB serial port name, e.g. 'COM3')
 
             % Clear orphaned timers from previous instances
             obj.clearTimers(portName);
 
             % Setup USB serial port
-            obj.Port = ArCOM_LickSense(portName, 480000000);
+            obj.Port = ArCOM_LickStick(portName, 480000000);
             
             % Confirm firmware version
             obj.Port.write('F', 'uint8');
             fv = obj.Port.read(1, 'uint32');
             if (fv > obj.currentFirmwareVersion)
                 obj.Port = [];
-                error('Future firmware version detected. Please update LickSense.')
+                error('Future firmware version detected. Please update LickStick.')
             elseif (fv < obj.currentFirmwareVersion)
                 obj.Port = [];
                 error('Old firmware version detected. Please update firmware.')
@@ -122,7 +122,7 @@ classdef LickSense < handle
                 end
                 obj.Port.write(['I' typecast(single((1/newRate)*1000000), 'uint8')]);
             else
-                warning('LickSense warning: firmware v1 has a fixed sampling rate. Sampling rate not changed.')
+                warning('LickStick warning: firmware v1 has a fixed sampling rate. Sampling rate not changed.')
                 newRate = 2000;
             end
             obj.samplingRate = newRate;

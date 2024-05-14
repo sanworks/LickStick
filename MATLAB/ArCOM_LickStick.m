@@ -1,7 +1,7 @@
 %{
 ----------------------------------------------------------------------------
 
-This file is part of the Sanworks LickSense repository
+This file is part of the Sanworks LickStick repository
 Copyright (C) Sanworks LLC, Rochester, New York, USA
 
 ----------------------------------------------------------------------------
@@ -24,16 +24,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 % #include "ArCOM.h". See documentation for more Arduino-side tips.
 %
 % Initialization syntax:
-% MyPort = ArCOM_LickSense('COM3')
+% MyPort = ArCOM_LickStick('COM3')
 % where 'COM3' is the name of Arduino's serial port on your system
 % This call both creates and opens the port. It returns an object containing
 % a serial port and properties. If PsychToolbox IOport interface is
 % available in MATLAB r2019a or earlier, it is used by default. 
 % To force the java interface on a pre-r2019a system with PsychToolbox, 
-% use ArCOM_LickSense('COM3', 'java')
+% use ArCOM_LickStick('COM3', 'java')
 %
 % ArCOM can be created with the following optional arguments:
-% MyPort = ArCOM_LickSense('COM3', baudRate, Interface, TCPPort, InputBufferSize, OutputBufferSize, IOPortBackgroundReads)
+% MyPort = ArCOM_LickStick('COM3', baudRate, Interface, TCPPort, InputBufferSize, OutputBufferSize, IOPortBackgroundReads)
 % To avoid time-costly arg parsing, all arguments must be provided, up to the highest one needed.
 % baudRate is in bps. This is ignored for microcontrollers with native USB support (e.g. 32-bit Arduino, Teensy 3.X-4.X).
 % Interface can be either [], 'Java', 'PsychToolbox'. [] defaults to Java for r2019b or newer, and Psychtoolbox on older versions.
@@ -59,7 +59,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 % object in the workspace of the calling function. You can also type clear
 % MyPort - the object destructor will automatically close the port.
 
-classdef ArCOM_LickSense < handle
+classdef ArCOM_LickStick < handle
     properties
         Port
         baudRate
@@ -78,7 +78,7 @@ classdef ArCOM_LickSense < handle
         JavaPortType = 0;
     end
     methods
-        function obj = ArCOM_LickSense(portString, varargin)
+        function obj = ArCOM_LickStick(portString, varargin)
             obj.UsePsychToolbox = 0;
             obj.Interface = 0; % Java serial interface
             baudRate = 115200;
