@@ -168,6 +168,7 @@ classdef ArCOM_LickStick < handle
                 error(['Error: ' baudRate ' is an invalid baud rate for ArCOM. Some common baud rates are: 9600, 115200'])
             end
             obj.validDataTypes = {'char', 'uint8', 'uint16', 'uint32', 'int8', 'int16', 'int32'};
+
             % If PortString is an IP address, set Interface to 3 or 4 (TCP/IP via Instrument Control or Psych Toolbox)
             if (portString(1) > 47) && (portString(1) < 58) && sum(portString == '.') > 2
                 v = ver;

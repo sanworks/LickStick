@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="1.3028325in"
+   height="0.4617402in"
+   viewBox="0 0 33.091945 11.728201"
+   version="1.1"
+   id="svg5"
+   inkscape:version="1.2 (dc2aedaf03, 2022-05-15)"
+   sodipodi:docname="LickStick_Graphic_Exploded.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview7"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     showgrid="false"
+     inkscape:zoom="9.5144351"
+     inkscape:cx="68.212142"
+     inkscape:cy="15.607863"
+     inkscape:window-width="1920"
+     inkscape:window-height="1122"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs2">
+    <marker
+       style="overflow:visible"
+       id="marker4633"
+       refX="0"
+       refY="0"
+       orient="auto-start-reverse"
+       inkscape:stockid="Arrow4"
+       markerWidth="5"
+       markerHeight="6"
+       viewBox="0 0 5 6"
+       inkscape:isstock="true"
+       inkscape:collect="always"
+       preserveAspectRatio="xMidYMid">
+      <path
+         style="fill:context-stroke;fill-rule:evenodd;stroke:none"
+         d="m 1,0 -3,3 h -2 l 3,-3 -3,-3 h 2 z"
+         id="path4631" />
+    </marker>
+    <marker
+       style="overflow:visible"
+       id="Arrow4"
+       refX="0"
+       refY="0"
+       orient="auto-start-reverse"
+       inkscape:stockid="Arrow4"
+       markerWidth="5"
+       markerHeight="6"
+       viewBox="0 0 5 6"
+       inkscape:isstock="true"
+       inkscape:collect="always"
+       preserveAspectRatio="xMidYMid">
+      <path
+         style="fill:context-stroke;fill-rule:evenodd;stroke:none"
+         d="m 1,0 -3,3 h -2 l 3,-3 -3,-3 h 2 z"
+         id="path1741" />
+    </marker>
+  </defs>
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1"
+     transform="translate(-0.09688672,-0.10839726)">
+    <rect
+       style="fill:#003300;fill-opacity:1;stroke:#000000;stroke-width:0.0475648"
+       id="rect312"
+       width="23.874125"
+       height="8.6151218"
+       x="4.6074777"
+       y="1.7435917" />
+    <path
+       style="fill:#003300;fill-opacity:1;stroke:#003300;stroke-width:1.94924;stroke-dasharray:none;stroke-opacity:1;marker-start:url(#Arrow4);marker-end:url(#marker4633)"
+       d="M 2.0461244,5.9501387 31.239595,5.9948567"
+       id="path3261"
+       sodipodi:nodetypes="cc" />
+    <text
+       xml:space="preserve"
+       style="font-size:3.88056px;font-family:Aldrich;-inkscape-font-specification:Aldrich;fill:#ffffff;fill-opacity:1;stroke:#003300;stroke-width:2;stroke-dasharray:none;stroke-opacity:1"
+       x="5.7811174"
+       y="9.5172138"
+       id="text5032"><tspan
+         sodipodi:role="line"
+         id="tspan5030"
+         style="stroke-width:2"
+         x="5.7811174"
+         y="9.5172138" /></text>
+    <g
+       aria-label="LICKSTICK"
+       id="text5188"
+       style="font-size:5.29167px;font-family:Aldrich;-inkscape-font-specification:Aldrich;stroke:#003300;stroke-width:0.3">
+      <path
+         d="M 7.968318,8.2731438 H 6.0327995 V 3.5640086 H 6.743116 v 4.002577 h 1.225202 z"
+         style="font-family:Bebas;-inkscape-font-specification:Bebas;fill:#ffffff;stroke:#ffffff;stroke-opacity:0"
+         id="path700" />
+      <path
+         d="M 9.1672164,8.2731438 H 8.4568999 V 3.5640086 h 0.7103165 z"
+         style="font-family:Bebas;-inkscape-font-specification:Bebas;fill:#ffffff;stroke:#ffffff;stroke-opacity:0"
+         id="path702" />
+      <path
+         d="m 10.922333,8.3332764 q -0.469786,0 -0.800516,-0.3269711 Q 9.7948461,7.6755759 9.7948461,7.2095482 V 4.638879 q 0,-0.469786 0.3307289,-0.7967571 0.33073,-0.3307293 0.796758,-0.3307293 0.469786,0 0.796757,0.3307293 0.326971,0.3307294 0.326971,0.7967571 V 5.1763143 H 11.309436 V 4.6238459 q 0,-0.169123 -0.120265,-0.2893882 -0.120265,-0.1202652 -0.289388,-0.1202652 -0.169123,0 -0.289388,0.1202652 -0.116507,0.1202652 -0.116507,0.2893882 v 2.5781857 q 0,0.169123 0.116507,0.2893882 0.120265,0.1165069 0.289388,0.1165069 0.169123,0 0.289388,-0.1165069 0.120265,-0.1202652 0.120265,-0.2893882 V 6.5518478 h 0.736625 v 0.6577004 q 0,0.469786 -0.33073,0.7967571 -0.330729,0.3269711 -0.792998,0.3269711 z"
+         style="font-family:Bebas;-inkscape-font-specification:Bebas;fill:#ffffff;stroke:#ffffff;stroke-opacity:0"
+         id="path704" />
+      <path
+         d="M 13.342669,6.7848616 V 8.2731438 H 12.628594 V 3.5602503 h 0.714075 v 1.6799549 l 0.864406,-1.6799549 h 0.759174 l -0.973397,1.9280019 1.138762,2.7848916 h -0.83434 L 13.553133,6.3639333 Z"
+         style="font-family:Bebas;-inkscape-font-specification:Bebas;fill:#ffffff;stroke:#ffffff;stroke-opacity:0"
+         id="path706" />
+      <path
+         d="m 17.679728,7.1005578 q 0.0075,0.4923358 -0.255563,0.8418566 -0.172882,0.2367722 -0.488578,0.3344877 -0.169123,0.052616 -0.39462,0.052616 -0.41717,0 -0.691525,-0.2067059 Q 15.620186,7.9536893 15.484888,7.6643011 15.353348,7.3711546 15.330798,6.9953258 L 16.00729,6.946468 q 0.0451,0.4096534 0.217981,0.5938096 0.127781,0.1390566 0.293146,0.13154 0.233014,-0.00752 0.372071,-0.2292555 0.07141,-0.1089904 0.07141,-0.311938 0,-0.2931464 -0.266838,-0.5825346 Q 16.484592,6.3489002 16.063664,5.9505216 15.710385,5.6085174 15.563812,5.3379207 15.405964,5.0334993 15.405964,4.6764619 q 0,-0.6426673 0.432203,-0.9733966 0.266838,-0.1991893 0.661459,-0.1991893 0.379587,0 0.650183,0.169123 0.210465,0.13154 0.338246,0.3683122 0.131541,0.2367722 0.157849,0.5449518 L 16.965653,4.7102865 Q 16.935587,4.4208983 16.800289,4.2592919 16.702573,4.142785 16.518417,4.142785 q -0.195431,0 -0.296905,0.1728812 -0.08268,0.1390567 -0.08268,0.3457626 0,0.3232128 0.278113,0.6577004 0.105232,0.1277818 0.315696,0.3006631 0.248048,0.2067058 0.326972,0.2893882 0.26308,0.2630801 0.405895,0.5186437 0.06765,0.1202653 0.10899,0.221739 0.101474,0.2518054 0.105232,0.4509946 z"
+         style="font-family:Bebas;-inkscape-font-specification:Bebas;fill:#ffffff;stroke:#ffffff;stroke-opacity:0"
+         id="path708" />
+      <path
+         d="M 18.923727,4.2743251 H 18.168311 V 3.5640086 h 2.21739 v 0.7103165 h -0.751658 v 3.9988187 h -0.710316 z"
+         style="font-family:Bebas;-inkscape-font-specification:Bebas;fill:#ffffff;stroke:#ffffff;stroke-opacity:0"
+         id="path710" />
+      <path
+         d="M 21.667279,8.2731438 H 20.956962 V 3.5640086 h 0.710317 z"
+         style="font-family:Bebas;-inkscape-font-specification:Bebas;fill:#ffffff;stroke:#ffffff;stroke-opacity:0"
+         id="path712" />
+      <path
+         d="m 23.422394,8.3332764 q -0.469786,0 -0.800516,-0.3269711 Q 22.294907,7.6755759 22.294907,7.2095482 V 4.638879 q 0,-0.469786 0.33073,-0.7967571 0.330729,-0.3307293 0.796757,-0.3307293 0.469786,0 0.796757,0.3307293 0.326971,0.3307294 0.326971,0.7967571 V 5.1763143 H 23.809498 V 4.6238459 q 0,-0.169123 -0.120266,-0.2893882 -0.120265,-0.1202652 -0.289388,-0.1202652 -0.169123,0 -0.289388,0.1202652 -0.116507,0.1202652 -0.116507,0.2893882 v 2.5781857 q 0,0.169123 0.116507,0.2893882 0.120265,0.1165069 0.289388,0.1165069 0.169123,0 0.289388,-0.1165069 0.120266,-0.1202652 0.120266,-0.2893882 V 6.5518478 h 0.736624 v 0.6577004 q 0,0.469786 -0.330729,0.7967571 -0.33073,0.3269711 -0.792999,0.3269711 z"
+         style="font-family:Bebas;-inkscape-font-specification:Bebas;fill:#ffffff;stroke:#ffffff;stroke-opacity:0"
+         id="path714" />
+      <path
+         d="M 25.842732,6.7848616 V 8.2731438 H 25.128657 V 3.5602503 h 0.714075 v 1.6799549 l 0.864406,-1.6799549 h 0.759174 l -0.973396,1.9280019 1.138761,2.7848916 h -0.83434 L 26.053196,6.3639333 Z"
+         style="font-family:Bebas;-inkscape-font-specification:Bebas;fill:#ffffff;stroke:#ffffff;stroke-opacity:0"
+         id="path716" />
+    </g>
+  </g>
+</svg>

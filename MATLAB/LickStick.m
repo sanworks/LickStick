@@ -33,7 +33,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 classdef LickStick < handle
     properties
         Port                   % USB Serial port (Wrapped with ArCOM class)
-        activeChannel          % The active channel index (0 or 1)
+        activeChannel          % The active channel index (1 or 2)
         rCount                 % Number of crystal clock counts comprising duration to measure capacitance.
                                % Higher rCount = better detection, but adds latency
         settleCount            % Number of clock counts to pause before measuring
@@ -96,7 +96,7 @@ classdef LickStick < handle
             obj.refDivider = 1;
             obj.driveCurrent = 31;
             obj.threshold = 18200000;
-            obj.activeChannel = 0;
+            obj.activeChannel = 1;
             obj.ledEnabled = false;
             obj.samplingRate = 2000; % Frequency at which FDC2214-Q1 is polled for new measurements (Hz)
 
@@ -141,10 +141,10 @@ classdef LickStick < handle
             % Callback function triggered when activeChannel is set.
             % Args: newChannel, the new active channel index (0 or 1)
             obj.assertNotStreaming('activeChannel');
-            if ~(newChannel == 0 || newChannel == 1)
-                error ('Error: Active channel must be either 0 or 1')
+            if ~(newChannel == 1 || newChannel == 2)
+                error ('Error: Active channel must be either 1 or 2')
             end
-            obj.Port.write(['!' newChannel], 'uint8');
+            obj.Port.write(['!' newChannel-1], 'uint8');
             obj.activeChannel = newChannel;
         end
 
