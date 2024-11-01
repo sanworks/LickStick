@@ -273,25 +273,41 @@ classdef LickStick < handle
             obj.gui.DisplayTimes = nan(1,obj.nDisplaySamples);
 
             % Setup GUI figure and UI elements
-            obj.gui.Fig  = figure('name','Sensor Stream','numbertitle','off', 'MenuBar', 'none','Position',[100,400,1400,480], 'CloseRequestFcn', @(h,e)obj.endAcq());
-            obj.gui.Plot = axes('units','normalized', 'position',[.07 .15 .9 .75]); ylabel('Sensor value (bits)', 'FontSize', 18); xlabel('Time (s)', 'FontSize', 18);
-            obj.gui.thresholdLabel = uicontrol('Style', 'text', 'Position', [5 10 70 20], 'FontSize', 12, 'String', 'Thresh:');
-            obj.gui.thresholdSet = uicontrol('Style', 'edit', 'Position', [80 10 70 20], 'FontSize', 10,...
-                'BackgroundColor', [1 1 1], 'FontWeight', 'bold', 'Callback',@(h,e)obj.uiSetThreshold,...
+            obj.gui.Fig  = figure('name','LickStick','numbertitle','off', 'MenuBar', 'none',...
+                                  'Position',[100,400,1280,400], 'CloseRequestFcn', @(h,e)obj.endAcq());
+            obj.gui.Plot = axes('units','normalized', 'position',[.07 .15 .9 .75]); 
+            ylabel('Sensor value (bits)', 'FontSize', 18); xlabel('Time (s)', 'FontSize', 18);
+            obj.gui.thresholdLabel = uicontrol('Style', 'text', 'Position', [5 15 70 20],... 
+                                               'FontSize', 12, 'String', 'Thresh:');
+            obj.gui.thresholdSet = uicontrol('Style', 'edit', 'Position', [70 10 80 30],... 
+                                             'FontSize', 10, 'BackgroundColor', [1 1 1],... 
+                                             'FontWeight', 'bold', 'Callback',@(h,e)obj.uiSetThreshold,...
                 'String',num2str(obj.threshold));
-            obj.gui.autoThreshButton = uicontrol('Style', 'pushbutton', 'Position', [160 10 80 20], 'FontSize', 12, 'String', 'AutoSet', 'Callback',@(h,e)obj.uiAutoSetThreshold);
+            obj.gui.threshPlusBtn = uicontrol('Style', 'pushbutton', 'Position', [155 26 25 13],... 
+                                                 'FontSize', 12, 'String', '+',... 
+                                                 'Callback',@(h,e)obj.uiAdjustThreshold('+'));
+            obj.gui.threshMinusBtn = uicontrol('Style', 'pushbutton', 'Position', [155 10 25 13],... 
+                                                 'FontSize', 12, 'String', '-',... 
+                                                 'Callback',@(h,e)obj.uiAdjustThreshold('-'));
+            obj.gui.autoThreshButton = uicontrol('Style', 'pushbutton', 'Position', [185 10 80 30],... 
+                                                 'FontSize', 12, 'String', 'AutoSet',... 
+                                                 'Callback',@(h,e)obj.uiAutoSetThreshold);
             set(gca, 'xlim', [0 obj.maxDisplayTime]);
-            obj.gui.tMaxLabel = uicontrol('Style', 'text', 'Position', [1090 10 100 20], 'FontSize', 12, 'String', 'tMax (s):');
-            obj.gui.tMaxSet = uicontrol('Style', 'edit', 'Position', [1200 10 70 20], 'FontSize', 10,...
+            obj.gui.tMaxLabel = uicontrol('Style', 'text', 'Position', [1015 15 100 20],... 
+                                          'FontSize', 12, 'String', 'tMax (s):');
+            obj.gui.tMaxSet = uicontrol('Style', 'edit', 'Position', [1100 10 70 30], 'FontSize', 10,...
                 'BackgroundColor', [1 1 1], 'FontWeight', 'bold', 'Callback',@(h,e)obj.uiSetTmax,...
                 'String',num2str(obj.maxDisplayTime));
-            obj.gui.resetRangeButton = uicontrol('Style', 'pushbutton', 'Position', [1290 10 100 20], 'FontSize', 12, 'String', 'RngReset', 'Callback',@(h,e)obj.UIresetRange);
-            %set(gca, 'ylim', [15500000 16000000]);
-            obj.gui.startStopButton = uicontrol('Style', 'pushbutton', 'Position', [1290 440 100 30], 'FontSize', 12, 'String', 'Stop', 'Callback',@(h,e)obj.uiStartStop);
+            obj.gui.resetRangeButton = uicontrol('Style', 'pushbutton', 'Position', [1175 10 100 30],... 
+                                                 'FontSize', 12, 'String', 'RngReset',... 
+                                                 'Callback',@(h,e)obj.UIresetRange);
+            obj.gui.startStopButton = uicontrol('Style', 'pushbutton', 'Position', [1175 365 100 30],... 
+                                                'FontSize', 12, 'String', 'Stop', 'Callback',@(h,e)obj.uiStartStop);
             Xdata = nan(1,obj.nDisplaySamples); Ydata = nan(1,obj.nDisplaySamples);
             obj.gui.OscopeDataLine = line([Xdata,Xdata],[Ydata,Ydata], 'LineWidth', 1.5);
             obj.gui.OscopeTTLLine = line([Xdata,Xdata],[Ydata,Ydata], 'Color','black', 'LineWidth', 1.5);
-            obj.gui.OscopeThreshLine = line([0, obj.nDisplaySamples],[obj.threshold,obj.threshold], 'Color','red','LineStyle','--');
+            obj.gui.OscopeThreshLine = line([0, obj.nDisplaySamples],[obj.threshold,obj.threshold],... 
+                                            'Color','red','LineStyle','--');
             
             % Setup GUI variables
             obj.gui.DisplayPos = 1;
@@ -304,7 +320,8 @@ classdef LickStick < handle
 
             % Setup & start GUI timer. The callback reads new data from the
             % serial port, logs the data and updates the plot.
-            obj.streamTimer = timer('TimerFcn',@(h,e)obj.updatePlot(), 'ExecutionMode', 'fixedRate', 'Period', 0.01, 'Tag', ['LS_' obj.Port.PortName]);
+            obj.streamTimer = timer('TimerFcn',@(h,e)obj.updatePlot(), 'ExecutionMode', 'fixedRate',... 
+                                    'Period', 0.01, 'Tag', ['LS_' obj.Port.PortName]);
             obj.startAcq;
         end
 
@@ -393,6 +410,28 @@ classdef LickStick < handle
                 obj.stopAcq;
             end
             obj.autoSetThreshold;
+            set(obj.gui.thresholdSet, 'string', num2str(obj.threshold))
+            obj.uiSetThreshold;
+            if wasStreaming
+                obj.startAcq;
+            end
+        end
+
+        function uiAdjustThreshold(obj, op)
+            wasStreaming = false;
+            if obj.streaming == 1
+                wasStreaming = true;
+                obj.stopAcq;
+            end
+            increment = 2000;
+            thresh = obj.threshold;
+            thresh = round(thresh/increment)*increment;
+            switch op
+                case '+'
+                    obj.threshold = thresh + increment;
+                case '-'
+                    obj.threshold = thresh - increment;
+            end
             set(obj.gui.thresholdSet, 'string', num2str(obj.threshold))
             obj.uiSetThreshold;
             if wasStreaming
