@@ -18,8 +18,32 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+# Python class to interface with the LickStick device, a capacitive lick detector powered by the
+# Texas Instruments FDC2214-Q1 sensor IC. A port of the MATLAB class (/MATLAB/LickStick.m), with the
+# same property and method names. See "Known issues" in /AGENTS.md.
+#
+# Usage:
+# from lickstick import LickStick
+# L = LickStick('COM3')          # Where COM3 is the device's USB serial port. Programs the defaults
+# L.rCount = 256                 # Update the device params by setting attributes
+# L.autoSetThreshold()           # Automatically set the lick detection threshold
+# values = L.readSensor(10)      # Read sensor values (units = bits)
+# L.stream()                     # Launch the streaming GUI. Returns when its window is closed
+# data = L.acquiredData          # Stored data from the last streaming GUI session
+#
+# To record while a protocol runs:
+# L.stream(block=False)          # Returns at once. A thread records the samples from here on
+# L.update()                     # Call regularly (it redraws the window and handles its buttons)
+# L.endAcq()                     # Ends the recording and closes the window
+#
+# The sensor value falls when the drink tube is touched: a lick is detected while the value is at or
+# below the threshold. See /USING.md for setup, the parameters, the recorded data and pitfalls, and
+# /Firmware/PROTOCOL.md for the bytes each call sends.
+
+import os
 import serial
 import struct
+import threading
 import numpy as np
 import time
 import datetime
@@ -32,57 +56,97 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 class LickStick:
     def __init__(self, portName):
-        self._currentFirmwareVersion = 2  # Assumed current version
-        self.Port = serial.Serial(portName, 480000000, timeout=0)
+        self._currentFirmwareVersion = 2  # The firmware version this class works with
+        self._readTimeout = 3  # A read gives up when no byte has arrived for this long (s)
+        self._initialized = False
+        self._streaming = False
 
-        # Confirm firmware version
-        self.Port.write(struct.pack('B', ord('F')))
-        fv_data = self._read_exact(4)
-        if len(fv_data) < 4:
-            raise ValueError('No response from device')
-        self._firmwareVersion = struct.unpack('<I', fv_data)[0]
-        if self._firmwareVersion > self._currentFirmwareVersion:
+        # timeout=0.1: a read returns when the bytes it asked for have arrived, or after 100 ms with
+        # those that have. _read_exact() repeats it. The baud rate is ignored by the device (USB CDC)
+        self.Port = serial.Serial(portName, 480000000, timeout=0.1)
+        try:
+            self._handshake()
+        except Exception:
             self.Port.close()
-            raise ValueError('Future firmware version detected. Please update LickStick.')
-        elif self._firmwareVersion < self._currentFirmwareVersion:
-            self.Port.close()
-            raise ValueError('Old firmware version detected. Please update firmware.')
+            raise
 
-        # Set default user parameters
-        self._rCount = 256
-        self._settleCount = 10
-        self._refDivider = 1
-        self._driveCurrent = 31
-        self._threshold = 18200000
-        self._activeChannel = 1
-        self._ledEnabled = False
-        
         # Set default internal parameters and constants
         self._EXT_CLK_FREQ = 40000000
-        self._samplingRate = 2000
-        self._streaming = False
         self._nDisplaySamples = 4000
         self._maxDisplayTime = 2
+        self._nSamplesPerAllocation = 7200000  # acquiredData grows by this many samples (1 hour at 2 kHz)
+        self._nAutoThreshSamples = 1000  # Samples that autoSetThreshold() measures
+        self._autoThreshRangeMultiple = 5  # Range-widths that it puts the threshold below them
 
         self.info = {}
         self.info['measurementTime_us'] = 0
+        self.acquiredData = {}
+        self.gui = {}
 
-        self.sampleDataTemplate = np.zeros(36000000, dtype=np.uint32)
+        # Streaming. The reader thread logs to self.acquiredData, and the main thread plots from it:
+        # both hold _dataLock while they use the data vectors or self.gui['acquiredDataPos']
+        self._dataLock = threading.Lock()
+        self._readerThread = None
+        self._stopReader = False
+        self._stopDeadline = 0
+        self._autoThreshStartPos = None  # First sample of an AutoSet measurement in progress
+        self._after_id = None
+
+        # Set default user parameters. As in the MATLAB class, each assignment programs the device
+        # (see the setters below). With the released firmware build, the four sensor settings each
+        # put a ~10ms pulse on the device's lick outputs (fixed issue 1 in /AGENTS.md)
+        self.rCount = 256
+        self.settleCount = 10
+        self.refDivider = 1
+        self.driveCurrent = 31
+        self.threshold = 18200000
+        self.activeChannel = 1
+        self.ledEnabled = False
+        self.samplingRate = 2000
+
         self._initialized = True
         self.computeMeasurementTime()
 
-        self._after_id = None # Initialize _after_id
+    def _handshake(self):
+        # A session that ended while streaming can have left the device sending samples (the
+        # released firmware build goes on until it is told to stop). Bytes that arrive unasked are
+        # that stream: stop it and discard them, or they would be read as the firmware version
+        if self.Port.read(1):
+            self.Port.write(struct.pack('BB', ord('S'), 0))
+            self._discardInput()
+
+        # Confirm firmware version
+        self.Port.write(struct.pack('B', ord('F')))
+        try:
+            fv_data = self._read_exact(4)
+        except TimeoutError:
+            raise TimeoutError(f'No LickStick answered on {self.Port.port}') from None
+        self._firmwareVersion = struct.unpack('<I', fv_data)[0]
+        if self._firmwareVersion > self._currentFirmwareVersion:
+            raise ValueError('Future firmware version detected. Please update LickStick.')
+        elif self._firmwareVersion < self._currentFirmwareVersion:
+            raise ValueError('Old firmware version detected. Please update firmware.')
 
     def _read_exact(self, size):
-        data = b''
+        # Reads size bytes from the device. Raises TimeoutError when none has arrived for
+        # _readTimeout seconds (the clock restarts at each byte, so a long readSensor() is not cut off)
+        data = bytearray()
+        deadline = time.monotonic() + self._readTimeout
         while len(data) < size:
             chunk = self.Port.read(size - len(data))
             if chunk:
                 data += chunk
-            if hasattr(self, 'gui') and 'Fig' in self.gui:
-                self.gui['Fig'].update_idletasks()
-            #time.sleep(0.01)
-        return data
+                deadline = time.monotonic() + self._readTimeout
+            elif time.monotonic() > deadline:
+                raise TimeoutError(f'The device sent {len(data)} of the {size} bytes expected')
+        return bytes(data)
+
+    def _discardInput(self, maxTime=2):
+        # Discards what the device sends, until it has sent nothing for 100 ms (the port's timeout).
+        # Gives up after maxTime seconds, in case the port is not a LickStick and never stops
+        deadline = time.monotonic() + maxTime
+        while self.Port.read(4096) and time.monotonic() < deadline:
+            pass
 
     @property
     def samplingRate(self):
@@ -99,7 +163,7 @@ class LickStick:
             print('LickStick warning: firmware v1 has a fixed sampling rate. Sampling rate not changed.')
             newRate = 2000
         self._samplingRate = newRate
-        self._nDisplaySamples = self.samplingRate * self._maxDisplayTime
+        self._nDisplaySamples = int(self.samplingRate * self._maxDisplayTime)
 
     @property
     def ledEnabled(self):
@@ -118,6 +182,7 @@ class LickStick:
     @activeChannel.setter
     def activeChannel(self, newChannel):
         self.assertNotStreaming('activeChannel')
+        # Channels are numbered 1 and 2, as labeled on the device, and sent as 0 and 1
         if newChannel not in (1, 2):
             raise ValueError('Active channel must be either 1 or 2')
         self.Port.write(struct.pack('BB', ord('!'), newChannel - 1))
@@ -180,6 +245,10 @@ class LickStick:
 
     @threshold.setter
     def threshold(self, newThreshold):
+        # May be set during streaming: op 'T' does not disturb the sensor
+        newThreshold = int(round(newThreshold))
+        if newThreshold < 0 or newThreshold > 4294967295:
+            raise ValueError('threshold must be in range [0 4294967295]')
         self.Port.write(struct.pack('<BI', ord('T'), newThreshold))
         self._threshold = newThreshold
 
@@ -191,29 +260,49 @@ class LickStick:
         return values
 
     def autoSetThreshold(self):
+        # Sets the threshold 5 range-widths (_autoThreshRangeMultiple) below the signal measured now.
+        # Run when the subject is NOT licking
         self.assertNotStreaming('threshold')
-        nSamplesToMeasure = 1000
-        rangeMultiple = 5
-        self.Port.write(struct.pack('<BI', ord('R'), nSamplesToMeasure))
-        data = self._read_exact(4 * nSamplesToMeasure)
-        Values = [struct.unpack('<I', data[i:i + 4])[0] for i in range(0, len(data), 4)]
-        vMax = max(Values)
-        vMin = min(Values)
+        self.threshold = self._thresholdFromSamples(self.readSensor(self._nAutoThreshSamples))
+
+    def _thresholdFromSamples(self, values):
+        # The threshold that autoSetThreshold() and the GUI's AutoSet button derive from a
+        # measurement of the resting signal. Not below 0, where the MATLAB class's uint32
+        # arithmetic stops too
+        vMax = int(max(values))
+        vMin = int(min(values))
         vRange = vMax - vMin
-        newThreshold = vMin - (rangeMultiple * vRange)
-        self.threshold = newThreshold
+        return max(0, vMin - (self._autoThreshRangeMultiple * vRange))
 
     def clearAcquiredData(self):
-        self.acquiredData['Sensor'] = self.sampleDataTemplate.copy()
-        self.acquiredData['TTL'] = np.zeros(36000000, dtype=np.uint8)
-        self.gui['acquiredDataPos'] = 1
+        # Clears the data in self.acquiredData. Intended to be used in a protocol, after
+        # stream(block=False) and just before the main loop, to exclude the samples acquired during
+        # manual threshold setup
+        with self._dataLock:
+            self.acquiredData['Sensor'] = np.zeros(self._nSamplesPerAllocation, dtype=np.uint32)
+            self.acquiredData['TTL'] = np.zeros(self._nSamplesPerAllocation, dtype=np.uint8)
+            self.acquiredData['nSamples'] = 0
+            self.gui['acquiredDataPos'] = 1
+            self.gui['plotPos'] = 1
+            if self._autoThreshStartPos is not None:
+                self._autoThreshStartPos = 1  # An AutoSet measurement in progress starts again
 
-    def stream(self):
+    def stream(self, block=True):
+        # Launches the live streaming GUI and starts recording to self.acquiredData.
+        # block=True (the default): runs the tkinter main loop, and returns when the window is closed.
+        # block=False: returns at once, so that a protocol can run alongside. The reader thread goes
+        # on recording whatever the protocol does, but the window is redrawn and its controls work
+        # only while update() is called (or, at an interactive prompt, while Python waits for input).
+        # End the recording with endAcq(), or by closing the window
+        if self._guiOpen():
+            self.gui['Fig'].lift()  # Already streaming: show the window
+            return
+
         # Setup data structure
         self.acquiredData = {}
         self.acquiredData['nSamples'] = 0
-        self.acquiredData['Sensor'] = self.sampleDataTemplate.copy()
-        self.acquiredData['TTL'] = np.zeros(36000000, dtype=np.uint8)
+        self.acquiredData['Sensor'] = np.zeros(self._nSamplesPerAllocation, dtype=np.uint32)
+        self.acquiredData['TTL'] = np.zeros(self._nSamplesPerAllocation, dtype=np.uint8)
         self.acquiredData['Params'] = {}
         self.acquiredData['Params']['threshold'] = self.threshold
         self.acquiredData['Params']['samplingRate'] = self.samplingRate
@@ -241,7 +330,11 @@ class LickStick:
         root.geometry('1280x400+100+400')
         root.protocol('WM_DELETE_WINDOW', self.endAcq)
         root.configure(bg='white')
-        root.iconbitmap("blank.ico") # Remove the feather icon
+        try:
+            # Replace the feather icon with the blank one beside this file
+            root.iconbitmap(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'blank.ico'))
+        except tk.TclError:
+            pass  # The file is missing, or the platform takes no .ico: keep tkinter's icon
         self.gui['Fig'] = root
 
         fig = Figure(figsize=(12.8, 4))
@@ -304,12 +397,14 @@ class LickStick:
         # Setup GUI variables
         self.gui['DisplayPos'] = 1
         self.gui['SweepStartTime'] = 0
-        self.gui['acquiredDataPos'] = 1
+        self.gui['acquiredDataPos'] = 1  # Where the next sample goes in acquiredData (counted from 1)
+        self.gui['plotPos'] = 1  # The next sample of acquiredData to plot (counted from 1)
         self.gui['FirstSample'] = 1
         self.gui['resetRangeFlag'] = False
         self.gui['Ymax'] = np.nan
         self.gui['Ymin'] = np.nan
         self.gui['y_inited'] = False
+        self._autoThreshStartPos = None
 
         self.startAcq()
         # Added lines to make the window visible and focused
@@ -319,33 +414,96 @@ class LickStick:
         root.attributes('-topmost', True)  # Makes the window topmost
         root.attributes('-topmost', False)  # Then allows other windows to go on top (optional, good practice)
 
-        root.mainloop()
+        if block:
+            root.mainloop()
+
+    def update(self):
+        # After stream(block=False): redraws the streaming window and runs the callbacks of its
+        # controls. Call it regularly from the protocol's loop, as drawnow is called in MATLAB.
+        # Recording does not depend on it. Does nothing once the window is closed
+        if self._guiOpen():
+            self.gui['Fig'].update()
 
     def __del__(self):
         if hasattr(self, 'Port') and self.Port.is_open:
             self.Port.close()
 
+    def _guiOpen(self):
+        return self.gui.get('Fig') is not None
+
+    def _readStream(self):
+        # Runs in the reader thread from startAcq() to stopAcq(): reads the samples as they arrive and
+        # logs them. It is the only reader of the port meanwhile, and it touches nothing of the GUI,
+        # which belongs to the main thread
+        pending = b''
+        while True:
+            try:
+                nWaiting = self.Port.in_waiting
+                chunk = self.Port.read(nWaiting if nWaiting > 0 else 1)  # Waits 100 ms at most
+            except (serial.SerialException, OSError) as e:
+                print(f'LickStick: the stream ended, because the port could not be read ({e})')
+                break
+            if chunk:
+                pending += chunk
+                nBytes = (len(pending) // 4) * 4
+                if nBytes > 0:
+                    self._logSamples(np.frombuffer(pending[:nBytes], dtype='<u4'))
+                    pending = pending[nBytes:]
+            # After stopAcq() has told the device to stop, read on until it is quiet, so that the
+            # recording has every sample that was sent
+            if self._stopReader and (not chunk or time.monotonic() > self._stopDeadline):
+                break
+
+    def _logSamples(self, words):
+        # Appends samples to self.acquiredData. Each sample is a uint32 whose lowest bit is the lick
+        # detection state, and whose other bits are the sensor value (see 'Sample word' in
+        # /Firmware/PROTOCOL.md). The samples carry no timestamp: a sample's time is its position in
+        # the stream / samplingRate
+        nNew = len(words)
+        with self._dataLock:
+            first = self.gui['acquiredDataPos'] - 1
+            last = first + nNew
+            if last > len(self.acquiredData['Sensor']):
+                nMore = max(self._nSamplesPerAllocation, nNew)
+                self.acquiredData['Sensor'] = np.concatenate(
+                    (self.acquiredData['Sensor'], np.zeros(nMore, dtype=np.uint32)))
+                self.acquiredData['TTL'] = np.concatenate(
+                    (self.acquiredData['TTL'], np.zeros(nMore, dtype=np.uint8)))
+            self.acquiredData['Sensor'][first:last] = words & np.uint32(0xFFFFFFFE)
+            self.acquiredData['TTL'][first:last] = words & np.uint32(1)
+            self.gui['acquiredDataPos'] = last + 1
+            self.acquiredData['nSamples'] = last
+
+    def _plotLoop(self):
+        # Called by tkinter every 10 ms during streaming
+        self._after_id = None
+        if self._streaming and self._guiOpen():
+            self.updatePlot()
+        # The window can have been closed, or the stream stopped, during updatePlot()
+        if self._streaming and self._guiOpen():
+            self._after_id = self.gui['Fig'].after(10, self._plotLoop)
+
     def updatePlot(self):
-        if not self._streaming:
-            # If streaming is stopped, cancel any pending after calls and return
-            if self._after_id:
-                self.gui['Fig'].after_cancel(self._after_id)
-                self._after_id = None
-            return
+        # Plots the samples that the reader thread has logged to self.acquiredData since the last
+        # call, and finishes an AutoSet measurement once its samples are in
+        autoThreshValues = None
+        with self._dataLock:
+            firstPos = self.gui['plotPos']
+            lastPos = self.gui['acquiredDataPos']
+            NewIntensities = self.acquiredData['Sensor'][firstPos - 1:lastPos - 1].copy()
+            LickDetected = self.acquiredData['TTL'][firstPos - 1:lastPos - 1].copy()
+            if (self._autoThreshStartPos is not None
+                    and lastPos - self._autoThreshStartPos >= self._nAutoThreshSamples):
+                start = self._autoThreshStartPos - 1
+                autoThreshValues = self.acquiredData['Sensor'][start:start + self._nAutoThreshSamples].copy()
+                self._autoThreshStartPos = None
+        self.gui['plotPos'] = lastPos
+        if autoThreshValues is not None:
+            self.threshold = self._thresholdFromSamples(autoThreshValues)
+            self._showThreshold()
 
-        BytesAvailable = self.Port.in_waiting
-        if BytesAvailable > 1:
-            nBytesToRead = (BytesAvailable // 4) * 4
-            data = self.Port.read(nBytesToRead)
-            nIntensities = nBytesToRead // 4
-            lickDetectedBytes = [data[i] for i in range(0, nBytesToRead, 4)]
-            LickDetected = [byte & 1 for byte in lickDetectedBytes]
-            data = bytearray(data)
-            for j, i in enumerate(range(0, nBytesToRead, 4)):
-                data[i] = lickDetectedBytes[j] & ~1
-            NewIntensities = struct.unpack('<' + 'I' * nIntensities, data)
-            NewIntensities = np.array(NewIntensities, dtype=np.uint32)
-
+        nIntensities = len(NewIntensities)
+        if nIntensities > 0:
             # One-time y-limit init so we can see data immediately
             if not self.gui.get('y_inited', False):
                 y_max = float(np.max(NewIntensities))
@@ -359,35 +517,28 @@ class LickStick:
                 self.gui['y_inited'] = True
 
             # TTL line mapped after Ymin/Ymax exist
-            NewDisplayTTL = np.array(
-                [(ld * (self.gui['Ymax'] - self.gui['Ymin'])) + self.gui['Ymin'] for ld in LickDetected],
-                dtype=float
-            )
-
-            self.acquiredData['Sensor'][
-            self.gui['acquiredDataPos'] - 1:self.gui['acquiredDataPos'] + nIntensities - 1] = NewIntensities
-            self.acquiredData['TTL'][
-            self.gui['acquiredDataPos'] - 1:self.gui['acquiredDataPos'] + nIntensities - 1] = LickDetected
-            self.gui['acquiredDataPos'] += nIntensities
+            NewDisplayTTL = (LickDetected.astype(float) * (self.gui['Ymax'] - self.gui['Ymin'])) + self.gui['Ymin']
 
             Div = self.samplingRate
             Times = np.arange(self.gui['DisplayPos'], self.gui['DisplayPos'] + nIntensities) / Div
             DisplayTime = Times[-1] - self.gui['SweepStartTime'] if len(Times) > 0 else 0
             self.gui['DisplayPos'] += nIntensities
             if DisplayTime >= self._maxDisplayTime:
-                if self.gui['FirstSample'] or self.gui['resetRangeFlag']:
-                    self.gui['Ymax'] = np.nanmax(self.gui['DisplayIntensities'])
-                    self.gui['Ymin'] = np.nanmin(self.gui['DisplayIntensities'])
-                    self.gui['FirstSample'] = 0
-                    self.gui['resetRangeFlag'] = False
-                if np.nanmax(self.gui['DisplayIntensities']) > self.gui['Ymax']:
-                    self.gui['Ymax'] = np.nanmax(self.gui['DisplayIntensities'])
-                    self.gui['Plot'].set_ylim([self.gui['Ymin'] - (self.gui['Ymin'] * 0.0005),
-                                               self.gui['Ymax'] + (self.gui['Ymax'] * 0.0005)])
-                if np.nanmin(self.gui['DisplayIntensities']) < self.gui['Ymin']:
-                    self.gui['Ymin'] = np.nanmin(self.gui['DisplayIntensities'])
-                    self.gui['Plot'].set_ylim([self.gui['Ymin'] - (self.gui['Ymin'] * 0.0005),
-                                               self.gui['Ymax'] + (self.gui['Ymax'] * 0.0005)])
+                # The sweep is full. (It is empty if more than a sweep of samples came at once)
+                if not np.all(np.isnan(self.gui['DisplayIntensities'])):
+                    if self.gui['FirstSample'] or self.gui['resetRangeFlag']:
+                        self.gui['Ymax'] = np.nanmax(self.gui['DisplayIntensities'])
+                        self.gui['Ymin'] = np.nanmin(self.gui['DisplayIntensities'])
+                        self.gui['FirstSample'] = 0
+                        self.gui['resetRangeFlag'] = False
+                    if np.nanmax(self.gui['DisplayIntensities']) > self.gui['Ymax']:
+                        self.gui['Ymax'] = np.nanmax(self.gui['DisplayIntensities'])
+                        self.gui['Plot'].set_ylim([self.gui['Ymin'] - (self.gui['Ymin'] * 0.0005),
+                                                   self.gui['Ymax'] + (self.gui['Ymax'] * 0.0005)])
+                    if np.nanmin(self.gui['DisplayIntensities']) < self.gui['Ymin']:
+                        self.gui['Ymin'] = np.nanmin(self.gui['DisplayIntensities'])
+                        self.gui['Plot'].set_ylim([self.gui['Ymin'] - (self.gui['Ymin'] * 0.0005),
+                                                   self.gui['Ymax'] + (self.gui['Ymax'] * 0.0005)])
                 self.resetSweep()
             else:
                 SweepTimes = Times - self.gui['SweepStartTime']
@@ -403,11 +554,6 @@ class LickStick:
             self.gui['canvas'].draw()
             self.gui['canvas'].flush_events()
 
-        # Only schedule the next update if streaming is still active
-        if self._streaming:
-            self._after_id = self.gui['Fig'].after(10, self.updatePlot)
-
-
     def resetSweep(self):
         self.gui['DisplayIntensities'] = np.full(self._nDisplaySamples, np.nan)
         self.gui['DisplayTTL'] = np.full(self._nDisplaySamples, np.nan)
@@ -415,13 +561,21 @@ class LickStick:
         self.gui['DisplayPos'] = 1
         self.gui['SweepStartTime'] = 0
 
-    def uiSetThreshold(self):
-        newThreshold = float(self.gui['thresholdVar'].get())
-        self.threshold = int(newThreshold)
+    def _showThreshold(self):
+        # Shows self.threshold in the GUI's box and as the red line, and notes it in acquiredData
         self.acquiredData['Params']['threshold'] = self.threshold
-        self.gui['OscopeThreshLine'].set_ydata([newThreshold, newThreshold])
+        self.gui['thresholdVar'].set(str(self.threshold))
+        self.gui['OscopeThreshLine'].set_ydata([self.threshold, self.threshold])
         self.gui['canvas'].draw()
         self.gui['canvas'].flush_events()
+
+    def uiSetThreshold(self):
+        # Callback of the Thresh box. Text that is not a threshold is replaced by the one in force
+        try:
+            self.threshold = float(self.gui['thresholdVar'].get())
+        except (ValueError, OverflowError):
+            pass
+        self._showThreshold()
 
     def uiSetTmax(self):
         newTmax = float(self.gui['tMaxVar'].get())
@@ -440,52 +594,58 @@ class LickStick:
         self.gui['resetRangeFlag'] = True
 
     def uiAutoSetThreshold(self):
-        wasStreaming = False
+        # Callback of the AutoSet button. While streaming, the measurement is the next
+        # _nAutoThreshSamples samples of the stream (updatePlot() sets the threshold when they are
+        # in), so the recording is not paused. Run when the subject is NOT licking
         if self._streaming:
-            wasStreaming = True
-            self.stopAcq()
-        self.autoSetThreshold()
-        self.gui['thresholdVar'].set(str(self.threshold))
-        self.uiSetThreshold()
-        if wasStreaming:
-            self.startAcq()
+            with self._dataLock:
+                self._autoThreshStartPos = self.gui['acquiredDataPos']
+        else:
+            self.autoSetThreshold()
+            self._showThreshold()
 
     def uiAdjustThreshold(self, op):
-        wasStreaming = False
-        if self._streaming:
-            wasStreaming = True
-            self.stopAcq()
+        # Callback of the + and - buttons: moves the threshold by one increment. The stream goes on
         increment = 2000
         thresh = round(self.threshold / increment) * increment
         if op == '+':
-            self.threshold = thresh + increment
+            thresh = thresh + increment
         elif op == '-':
-            self.threshold = thresh - increment
-        self.gui['thresholdVar'].set(str(self.threshold))
-        self.uiSetThreshold()
-        if wasStreaming:
-            self.startAcq()
+            thresh = thresh - increment
+        self.threshold = min(max(thresh, 0), 4294967295)
+        self._showThreshold()
 
     def uiStartStop(self):
         if self._streaming:
             self.stopAcq()
-            self._streaming = False
             self.gui['startStopButton']['text'] = 'Start'
         else:
             self.startAcq()
-            self._streaming = True
             self.gui['startStopButton']['text'] = 'Stop'
 
     def startAcq(self):
         self._streaming = True
+        self._stopReader = False
         self.Port.write(struct.pack('BB', ord('S'), 1))
+        self._readerThread = threading.Thread(target=self._readStream, name='LickStick reader', daemon=True)
+        self._readerThread.start()
         # Store the ID returned by after
-        self._after_id = self.gui['Fig'].after(10, self.updatePlot)
+        self._after_id = self.gui['Fig'].after(10, self._plotLoop)
 
     def stopAcq(self):
+        # Stops the stream. The reader thread logs the samples still on their way, and ends when the
+        # device has been quiet for 100 ms (or after 2 s, if it never is)
         self._streaming = False
-        self.Port.write(struct.pack('BB', ord('S'), 0))
-        self.Port.reset_input_buffer()
+        self._autoThreshStartPos = None
+        try:
+            self.Port.write(struct.pack('BB', ord('S'), 0))
+        except serial.SerialException:
+            pass  # The device is gone. The reader thread has ended, and said so
+        if self._readerThread is not None:
+            self._stopDeadline = time.monotonic() + 2
+            self._stopReader = True
+            self._readerThread.join()
+            self._readerThread = None
         # Cancel the pending after call if it exists
         if self._after_id:
             self.gui['Fig'].after_cancel(self._after_id)
@@ -503,14 +663,20 @@ class LickStick:
                 f'Error: {paramName} cannot be set during USB data streaming. Close the streaming GUI first.')
 
     def endAcq(self):
+        # Ends the recording and closes the streaming window (also the window's close button)
+        if not self._guiOpen():
+            return
         if self._streaming:
             self.stopAcq()
         # Cancel the pending after call before destroying the window
         if self._after_id:
             self.gui['Fig'].after_cancel(self._after_id)
             self._after_id = None
-        self.gui['Fig'].destroy()
+        root = self.gui['Fig']
+        self.gui['Fig'] = None
+        root.destroy()
+        # Trim the preallocated data vectors to the samples received
         nSamples = self.gui['acquiredDataPos'] - 1
-        self.acquiredData['Sensor'] = self.acquiredData['Sensor'][:nSamples]
-        self.acquiredData['TTL'] = self.acquiredData['TTL'][:nSamples]
+        self.acquiredData['Sensor'] = self.acquiredData['Sensor'][:nSamples].copy()
+        self.acquiredData['TTL'] = self.acquiredData['TTL'][:nSamples].copy()
         self.acquiredData['nSamples'] = nSamples

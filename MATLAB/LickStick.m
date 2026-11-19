@@ -1,3 +1,22 @@
+% LickStick class to interface with the LickStick device, a capacitive lick
+% detector powered by the Texas Instruments FDC2214-Q1 sensor IC.
+%
+% Usage:
+% L = LickStick('COM3');       % Where COM3 is the device's USB serial port
+% L.field = value;             % Update the device params by setting class fields
+% L.autoSetThreshold;          % Automatically set the lick detection threshold
+% values = L.readSensor;       % Read the current sensor value (units = bits)
+% L.stream;                    % Launch a streaming GUI
+% data = L.acquiredData;       % Stored data from last streaming GUI session
+% clear L                      % Clear L when finished, releasing the serial port
+%
+% The sensor value falls when the drink tube is touched: a lick is detected
+% while the value is at or below the threshold. See /USING.md in the LickStick
+% repository for setup, the parameters, the recorded data and pitfalls, and
+% /Firmware/PROTOCOL.md for the bytes each call sends.
+
+% (This help text comes before the license so that 'help LickStick' shows it)
+
 %{
 ----------------------------------------------------------------------------
 
@@ -18,18 +37,6 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 %}
 
-% LickStick class to interface with the LickStick device, a capacitive lick
-% detector powered by the Texas Instruments FDC2214-Q1 sensor IC.
-%
-% Usage:
-% L = LickStick('COM3');       % Where COM3 is the device's USB serial port
-% L.field = value;             % Update the device params by setting class fields
-% L.autoSetThreshold;          % Automatically set the lick detection threshold
-% values = L.readSensor;       % Read the current sensor value (units = bits)
-% L.stream;                    % Launch a streaming GUI
-% data = L.acquiredData;       % Stored data from last streaming GUI session
-% clear L                      % Clear L when finished, releasing the serial port
-
 classdef LickStick < handle
     properties
         Port                   % USB Serial port (Wrapped with ArCOM class)
@@ -41,6 +48,7 @@ classdef LickStick < handle
         driveCurrent           % Current driving the sensor. Units = steps. Range = [0, 31] for [16µA, 1571µA]
                                % More current = better detection, higher odds of interference to other systems
         threshold              % Lick detection threshold. Units = bits. Range = [0, 4294967295]
+                               % A lick is detected while the sensor value is at or below it
         samplingRate           % Rate at which the FDC2214-Q1 is polled for new measurements
         ledEnabled             % If enabled, board LED remains on during detected licks
         
@@ -56,7 +64,7 @@ classdef LickStick < handle
     end
 
     properties (Access = private)
-        currentFirmwareVersion  % Current firmware version expected from device
+        currentFirmwareVersion = 2; % Current firmware version expected from device
         streamTimer             % MATLAB timer (to poll serial buffer during USB streaming)
         initialized = false;    % True after the constructor finishes executing
         streaming = false;      % Flag to indicate when streaming data via USB
@@ -64,7 +72,10 @@ classdef LickStick < handle
         nDisplaySamples = 4000; % #samples to show when streaming to live plot
         maxDisplayTime = 2;     % When streaming to plot, show up to last 2 seconds
         extClkFreq = 40000000;  % Fixed frequency of crystal clock on the device (Hz) 
-        sampleDataTemplate;     % Template for preallocated sample data
+        nSamplesPerAllocation = 7200000; % acquiredData grows by this many samples (1 hour at 2kHz)
+        nAutoThreshSamples = 1000;       % #samples that autoSetThreshold measures
+        autoThreshRangeMultiple = 5;     % #range-widths that it sets the threshold below them
+        autoThreshStartPos = [];         % First sample of an AutoSet measurement in progress
     end
 
     methods
@@ -78,9 +89,24 @@ classdef LickStick < handle
             % Setup USB serial port
             obj.Port = ArCOM_LickStick(portName, 480000000);
             
+            % A session that ended while streaming can have left the device sending
+            % samples (the released firmware build goes on until it is told to stop).
+            % Bytes that arrive unasked are that stream: stop it and discard them, or
+            % they would be read as the firmware version
+            pause(.05);
+            if obj.Port.bytesAvailable > 0
+                obj.Port.write(['S' 0], 'uint8');
+                obj.discardInput;
+            end
+
             % Confirm firmware version
             obj.Port.write('F', 'uint8');
-            fv = obj.Port.read(1, 'uint32');
+            try
+                fv = obj.Port.read(1, 'uint32');
+            catch
+                obj.Port = [];
+                error(['Error: No LickStick answered on ' portName '.'])
+            end
             if (fv > obj.currentFirmwareVersion)
                 obj.Port = [];
                 error('Future firmware version detected. Please update LickStick.')
@@ -90,7 +116,9 @@ classdef LickStick < handle
             end
             obj.firmwareVersion = fv;
 
-            % Set default parameters
+            % Set default parameters. Each assignment programs the device (see the set.
+            % methods below). With the released firmware build, the four sensor settings
+            % each put a ~10ms pulse on the device's lick outputs (fixed issue 1 in /AGENTS.md)
             obj.rCount = 256;
             obj.settleCount = 10;
             obj.refDivider = 1;
@@ -103,9 +131,6 @@ classdef LickStick < handle
             % Populate system info  
             obj.info.measurementTime_us = 0; % Actual measurement time in µs, computed from rCount, settleCount, 
                                              % refDivider and extClkFreq. 
-
-            % Preallocate
-            obj.sampleDataTemplate = uint32(zeros(1,36000000)); % Preallocate 5 hours of samples
 
             % Finish setup
             obj.initialized = true;
@@ -131,7 +156,7 @@ classdef LickStick < handle
 
         function set.ledEnabled(obj, newState)
             % Callback function triggered when ledEnabled is set.
-            % Args: newState, the new state of LED enbale (false or true)
+            % Args: newState, the new state of LED enable (false or true)
             obj.assertNotStreaming('ledEnabled');
             obj.Port.write(['L' uint8(newState)], 'uint8');
             obj.ledEnabled = newState;
@@ -139,7 +164,8 @@ classdef LickStick < handle
 
         function set.activeChannel(obj, newChannel)
             % Callback function triggered when activeChannel is set.
-            % Args: newChannel, the new active channel index (0 or 1)
+            % Args: newChannel, the new active channel index (1 or 2, as labeled on
+            %       the device. Sent to the device as 0 or 1)
             obj.assertNotStreaming('activeChannel');
             if ~(newChannel == 1 || newChannel == 2)
                 error ('Error: Active channel must be either 1 or 2')
@@ -222,33 +248,43 @@ classdef LickStick < handle
             % IMPORTANT: Run when the subject is NOT licking. For human
             % testing, run while finger is 3mm from drink tube end.
             % The range of the signal is measured in bits, and the threshold is
-            % set equal to 3 range-widths below the measured range.
+            % set equal to 5 range-widths (autoThreshRangeMultiple) below the measured range.
             obj.assertNotStreaming('threshold');
-            nSamplesToMeasure = 1000;
-            rangeMultiple = 5;
-            obj.Port.write('R', 'uint8', nSamplesToMeasure, 'uint32'); % Request 10k samples
-            Values = obj.Port.read(nSamplesToMeasure, 'uint32');
-            vMax = max(Values); vMin = min(Values); vRange = vMax-vMin;
-            newThreshold = vMin-(rangeMultiple*vRange);
-            obj.threshold = newThreshold;
+            obj.Port.write('R', 'uint8', obj.nAutoThreshSamples, 'uint32'); % Request 1k samples
+            Values = obj.Port.read(obj.nAutoThreshSamples, 'uint32');
+            obj.threshold = obj.thresholdFromSamples(Values);
         end
 
         function clearAcquiredData(obj)
             % Clears acquired data in obj.acquiredData. Intended to be used in protocol
             % file just before main loop to exclude samples acquired during manual threshold setup
-            obj.acquiredData.Sensor = obj.sampleDataTemplate;
-            obj.acquiredData.TTL = uint8(obj.sampleDataTemplate);
+            % The stream timer can run between any two of these statements (seen in
+            % R2025b). In this order, the worst it does is leave nSamples at 0 for one
+            % timer period while the first new samples are already in
+            obj.acquiredData.Sensor = zeros(1, obj.nSamplesPerAllocation, 'uint32');
+            obj.acquiredData.TTL = zeros(1, obj.nSamplesPerAllocation, 'uint8');
             obj.gui.acquiredDataPos = 1;
+            obj.acquiredData.nSamples = 0;
+            if ~isempty(obj.autoThreshStartPos)
+                obj.autoThreshStartPos = 1; % An AutoSet measurement in progress starts again
+            end
         end
 
         function stream(obj)
-            % Launch the live streaming GUI
+            % Launch the live streaming GUI, and start recording to obj.acquiredData.
+            % Returns at once: a timer reads the samples while MATLAB is idle, or in
+            % pause or drawnow. Closing the window ends the recording
+            if isfield(obj.gui, 'Fig') && ishandle(obj.gui.Fig)
+                figure(obj.gui.Fig); % Already streaming: show the window
+                return
+            end
 
-            % Setup data structure
+            % Setup data structure. The data vectors are lengthened when they fill
+            % (updatePlot), and trimmed to the samples received when the window closes
             obj.acquiredData = struct;
             obj.acquiredData.nSamples = 0;
-            obj.acquiredData.Sensor = obj.sampleDataTemplate;
-            obj.acquiredData.TTL = uint8(obj.sampleDataTemplate);
+            obj.acquiredData.Sensor = zeros(1, obj.nSamplesPerAllocation, 'uint32');
+            obj.acquiredData.TTL = zeros(1, obj.nSamplesPerAllocation, 'uint8');
             obj.acquiredData.Params = struct; 
             obj.acquiredData.Params.threshold = obj.threshold;
             obj.acquiredData.Params.samplingRate = obj.samplingRate;
@@ -316,11 +352,16 @@ classdef LickStick < handle
             obj.gui.FirstSample = 1;
             obj.gui.resetRangeFlag = false;
             obj.gui.Ymax = NaN; obj.gui.Ymin = NaN;
+            obj.autoThreshStartPos = [];
             drawnow;
 
             % Setup & start GUI timer. The callback reads new data from the
             % serial port, logs the data and updates the plot.
-            obj.streamTimer = timer('TimerFcn',@(h,e)obj.updatePlot(), 'ExecutionMode', 'fixedRate',... 
+            % fixedSpacing: the period is counted from the end of one callback to the
+            % start of the next. With fixedRate, a callback that takes longer than the
+            % period (18ms in R2025b) is always due, and the code that runs beside the
+            % plot is held up: a pause(.1) took up to 40s (issue 16 in /AGENTS.md)
+            obj.streamTimer = timer('TimerFcn',@(h,e)obj.updatePlot(), 'ExecutionMode', 'fixedSpacing',...
                                     'Period', 0.01, 'Tag', ['LS_' obj.Port.PortName]);
             obj.startAcq;
         end
@@ -331,8 +372,13 @@ classdef LickStick < handle
     end
     methods (Access = private) % Internal methods
         function updatePlot(obj)
+            % Timer callback during streaming: reads the samples that have arrived, logs
+            % them to obj.acquiredData and updates the plot. Each sample is a uint32
+            % whose lowest bit is the lick detection state, and whose other bits are the
+            % sensor value (see 'Sample word' in /Firmware/PROTOCOL.md). The samples carry
+            % no timestamp: a sample's time is its position in the stream / samplingRate
             BytesAvailable = obj.Port.bytesAvailable;
-            if BytesAvailable > 1
+            if BytesAvailable > 3 % At least one whole sample
                 nBytesToRead = floor(BytesAvailable/4)*4;
                 NewIntensities = obj.Port.read(nBytesToRead, 'uint8');
                 nIntensities = length(NewIntensities)/4;
@@ -341,9 +387,24 @@ classdef LickStick < handle
                 NewDisplayTTL = (double(LickDetected)*double(obj.gui.Ymax-obj.gui.Ymin)) + double(obj.gui.Ymin);
                 NewIntensities(1:4:end) = bitset(lickDetectedBytes, 1, 0);
                 NewIntensities = typecast(NewIntensities, 'uint32');
+                if obj.gui.acquiredDataPos+nIntensities-1 > length(obj.acquiredData.Sensor)
+                    % The data vectors are full: lengthen them
+                    nMore = max(obj.nSamplesPerAllocation, nIntensities);
+                    obj.acquiredData.Sensor(end+nMore) = 0;
+                    obj.acquiredData.TTL(end+nMore) = 0;
+                end
                 obj.acquiredData.Sensor(obj.gui.acquiredDataPos:obj.gui.acquiredDataPos+nIntensities-1) = NewIntensities;
                 obj.acquiredData.TTL(obj.gui.acquiredDataPos:obj.gui.acquiredDataPos+nIntensities-1) = double(LickDetected);
                 obj.gui.acquiredDataPos = obj.gui.acquiredDataPos + nIntensities;
+                obj.acquiredData.nSamples = obj.gui.acquiredDataPos-1;
+                if ~isempty(obj.autoThreshStartPos) &&...
+                        (obj.gui.acquiredDataPos-obj.autoThreshStartPos >= obj.nAutoThreshSamples)
+                    % The samples of an AutoSet measurement are in (see uiAutoSetThreshold)
+                    measuredPos = obj.autoThreshStartPos:obj.autoThreshStartPos+obj.nAutoThreshSamples-1;
+                    obj.autoThreshStartPos = [];
+                    obj.threshold = double(obj.thresholdFromSamples(obj.acquiredData.Sensor(measuredPos)));
+                    obj.showThreshold;
+                end
                 Div = obj.samplingRate; % Polling frequency (Hz), determined by READ_INTERVAL (us) in firmware. 
                 Times = (obj.gui.DisplayPos:obj.gui.DisplayPos+nIntensities-1)/Div;
                 DisplayTime = (Times(end)-obj.gui.SweepStartTime);
@@ -385,10 +446,21 @@ classdef LickStick < handle
         end
 
         function uiSetThreshold(obj)
+            % Callback of the Thresh box. Text that is not a threshold is replaced by
+            % the threshold in force
             newThreshold = str2double(get(obj.gui.thresholdSet, 'String'));
-            obj.threshold = newThreshold;
-            obj.acquiredData.Params.threshold = newThreshold;
-            set(obj.gui.OscopeThreshLine, 'ydata', [newThreshold,newThreshold]);
+            if isreal(newThreshold) && ~isnan(newThreshold) && newThreshold >= 0 && newThreshold <= 4294967295
+                obj.threshold = round(newThreshold);
+            end
+            obj.showThreshold;
+        end
+
+        function showThreshold(obj)
+            % Shows obj.threshold in the GUI's box and as the red line, and notes it
+            % in acquiredData
+            obj.acquiredData.Params.threshold = double(obj.threshold);
+            set(obj.gui.thresholdSet, 'String', num2str(obj.threshold));
+            set(obj.gui.OscopeThreshLine, 'ydata', double([obj.threshold, obj.threshold]));
         end
 
         function uiSetTmax(obj)
@@ -404,49 +476,40 @@ classdef LickStick < handle
         end
 
         function uiAutoSetThreshold(obj)
-            wasStreaming = false;
-            if obj.streaming == 1
-                wasStreaming = true;
-                obj.stopAcq;
-            end
-            obj.autoSetThreshold;
-            set(obj.gui.thresholdSet, 'string', num2str(obj.threshold))
-            obj.uiSetThreshold;
-            if wasStreaming
-                obj.startAcq;
+            % Callback of the AutoSet button. While streaming, the measurement is the
+            % next 1000 (nAutoThreshSamples) samples of the stream, and updatePlot sets
+            % the threshold when they are in, so the recording is not paused.
+            % Run when the subject is NOT licking
+            if obj.streaming
+                obj.autoThreshStartPos = obj.gui.acquiredDataPos;
+            else
+                obj.autoSetThreshold;
+                obj.showThreshold;
             end
         end
 
         function uiAdjustThreshold(obj, op)
-            wasStreaming = false;
-            if obj.streaming == 1
-                wasStreaming = true;
-                obj.stopAcq;
-            end
+            % Callback of the + and - buttons: moves the threshold by one increment.
+            % The stream goes on (op 'T' does not disturb the sensor)
             increment = 2000;
-            thresh = obj.threshold;
+            thresh = double(obj.threshold);
             thresh = round(thresh/increment)*increment;
             switch op
                 case '+'
-                    obj.threshold = thresh + increment;
+                    thresh = thresh + increment;
                 case '-'
-                    obj.threshold = thresh - increment;
+                    thresh = thresh - increment;
             end
-            set(obj.gui.thresholdSet, 'string', num2str(obj.threshold))
-            obj.uiSetThreshold;
-            if wasStreaming
-                obj.startAcq;
-            end
+            obj.threshold = min(max(thresh, 0), 4294967295);
+            obj.showThreshold;
         end
 
         function uiStartStop(obj)
             if obj.streaming
                 obj.stopAcq;
-                obj.streaming = false;
                 set(obj.gui.startStopButton, 'string', 'Start');
             else
                 obj.startAcq;
-                obj.streaming = true;
                 set(obj.gui.startStopButton, 'string', 'Stop');
             end
         end
@@ -458,11 +521,37 @@ classdef LickStick < handle
         end
 
         function stopAcq(obj)
+            % Stops the stream, and logs the samples that were still on their way (the
+            % timer can be some way behind the stream), so that the recording has
+            % every sample that was sent
             obj.streaming = false;
+            obj.autoThreshStartPos = [];
             obj.Port.write(['S' 0], 'uint8');
             stop(obj.streamTimer);
             pause(.1);
-            obj.Port.flush;
+            obj.updatePlot;
+            obj.discardInput;
+        end
+
+        function discardInput(obj)
+            % Discards what the device sends, until it has sent nothing for 100ms.
+            % Gives up after 2s, in case the port is not a LickStick and never stops
+            startTime = tic;
+            while toc(startTime) < 2
+                pause(.1);
+                if obj.Port.bytesAvailable == 0
+                    break
+                end
+                obj.Port.flush;
+            end
+        end
+
+        function newThreshold = thresholdFromSamples(obj, values)
+            % The threshold that autoSetThreshold and the GUI's AutoSet button derive
+            % from a measurement of the resting signal.
+            % Args: values, the samples measured (uint32: the arithmetic stops at 0)
+            vMax = max(values); vMin = min(values); vRange = vMax-vMin;
+            newThreshold = vMin-(obj.autoThreshRangeMultiple*vRange);
         end
 
         function clearTimers(obj, portString)
@@ -497,7 +586,7 @@ classdef LickStick < handle
         function endAcq(obj)
             % End acquisition
             if obj.streaming
-            obj.stopAcq;
+                obj.stopAcq;
             end
             delete(obj.streamTimer);
             obj.streamTimer = [];

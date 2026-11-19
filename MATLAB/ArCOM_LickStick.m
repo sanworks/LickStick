@@ -416,12 +416,10 @@ classdef ArCOM_LickStick < handle
                         nTotalBytes = nTotalBytes + nValues(i)*8;
                 end
             end
-            CurrentTime = clock;
-            StartTime = CurrentTime(end);
-            CurrentTime = StartTime;
-            while nTotalBytes > obj.InBuffer.bytesAvailable && (CurrentTime-StartTime < obj.Timeout)
-                CurrentTime = clock;
-                CurrentTime = CurrentTime(end);
+            % Timed with tic/toc. (The seconds field of clock was compared here before: a
+            % read that began in the last Timeout seconds of a minute never timed out)
+            StartTime = tic;
+            while nTotalBytes > obj.InBuffer.bytesAvailable && (toc(StartTime) < obj.Timeout)
                 switch obj.Interface
                     case 0
                         if obj.JavaPortType == 0
